@@ -38,11 +38,41 @@
 //
 // NOTE: This is a compact implementation meant to be extended.
 
-#include <bits/stdc++.h>
-using namespace std;
+#include "bytecraft/bytecode.hpp"
+#include "bytecraft/vm.hpp"
+
+#include <fstream>
+#include <iostream>
 
 
-int main(int argc, char** argv){
+using namespace bc;
+ 
+
+int main(int argc, char** argv) {
+  if (argc < 2) {
+    std::cerr << "Usage:\n"
+              << "  " << argv[0] << " run <program.bvm>\n"
+              << "  " << argv[0] << " asm <input.asm> -o <output.bvm>";
+    return 1;
+  }
+
+  std::string command = argv[1];
+
+
+  if (argc < 3) {
+    std::cerr << "Missing program file\n";
+    return 1;
+  }
+
+
+  std::string error_message;
+
+  if (!load_bvm(argv[2], module, error_message)) {
+    std::cerr << "Load failed: " << error_message << "\n";
+    return 1;
+  }
+
+
 
   return 0;
 }
