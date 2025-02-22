@@ -43,36 +43,61 @@
 
 #include <fstream>
 #include <iostream>
-
+#include <iterator>
+#include <string>
+#include <vector>
 
 using namespace bc;
- 
+
+static std::string read_all_text(const std::string& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return {};
+  }
+  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
 
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage:\n"
               << "  " << argv[0] << " run <program.bvm>\n"
-              << "  " << argv[0] << " asm <input.asm> -o <output.bvm>";
+              << "  " << argv[0] << " asm <input.asm> -o <output.bvm>\n";
     return 1;
   }
 
   std::string command = argv[1];
 
+  if (command == "run") {
+    if (argc < 3) {
+      std::cerr << "Missing program file\n";
+      return 1;
+    }
 
-  if (argc < 3) {
-    std::cerr << "Missing program file\n";
+    Module module;
+    std::string error_message;
+
+    if (!load_bvm(argv[2], module, error_message)) {
+      std::cerr << "Load failed: " << error_message << "\n";
+      return 1;
+    }
+
+    std::vector<std::uint8_t> memory_image;
+    memory_image.reserve(module.code_section.size() + module.data_section.size());
+    memory_image.insert(memory_image.end(), module.code_section.begin(), module.code_section.end());
+    memory_image.insert(memory_image.end(), module.data_section.begin(), module.data_section.end());
+
+    VM vm(std::move(memory_image),
+          module.entry_point,
+          static_cast<std::uint32_t>(module.code_section.size()),
+          static_cast<std::uint32_t>(module.data_section.size()));
+    vm.run();
+  } else if (command == "asm") {
+
+
+  } else {
+    std::cerr << "Unknown command: " << command << "\n";
     return 1;
   }
-
-
-  std::string error_message;
-
-  if (!load_bvm(argv[2], module, error_message)) {
-    std::cerr << "Load failed: " << error_message << "\n";
-    return 1;
-  }
-
-
 
   return 0;
 }
