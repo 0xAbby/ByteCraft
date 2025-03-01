@@ -1,6 +1,7 @@
 //  util.hpp:
 //    helper functions.
 
+#pragma once
 #include <algorithm>
 #include <cctype>
 #include <cstdint>

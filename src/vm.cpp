@@ -135,6 +135,40 @@ void VM::store32(std::uint32_t address, std::uint32_t value) {
 }
 
 /**
+ * @brief Update comparison flags (EQ, GT, LT) based on rS signedness.
+ *
+ * If rS bit0 is set, values are compared as signed int32.
+ * Otherwise, values are compared as unsigned.
+ *
+ * @param lhs  Left-hand value.
+ * @param rhs  Right-hand value.
+ * @return void
+ */
+void VM::set_compare_flags(std::uint32_t lhs, std::uint32_t rhs) {
+  registers_[RF] &= ~static_cast<std::uint32_t>(F_EQ | F_GT | F_LT);
+  bool signed_mode = (registers_[RS] & 1u) != 0u;
+  if (signed_mode) {
+    std::int32_t a = static_cast<std::int32_t>(lhs);
+    std::int32_t b = static_cast<std::int32_t>(rhs);
+    if (a == b) {
+      registers_[RF] |= F_EQ;
+    } else if (a > b) {
+      registers_[RF] |= F_GT;
+    } else {
+      registers_[RF] |= F_LT;
+    }
+  } else {
+    if (lhs == rhs) {
+      registers_[RF] |= F_EQ;
+    } else if (lhs > rhs) {
+      registers_[RF] |= F_GT;
+    } else {
+      registers_[RF] |= F_LT;
+    }
+  }
+}
+
+/**
  * @brief Print a single-step diagnostic line with registers and flags.
  *
  * Intended for tracing program execution after each instruction.
@@ -249,7 +283,7 @@ void VM::handle_syscall() {
 /**
  * @brief Execute a single instruction at IP and update machine state.
  *
- * Handles fetch/decode/execute for the currently implemented subset.
+ * Handles fetch/decode/execute for the implemented instruction set.
  * On error or OOB conditions, sets flags and transitions VM to a stopped state.
  *
  * @return void
@@ -280,43 +314,231 @@ void VM::step() {
     case OP_NOP: {
       break;
     }
+
     case OP_MOV: {
       std::uint8_t mode_byte = read_mode();
       std::uint8_t dst_type = dst_type_of(mode_byte);
       std::uint8_t src_type = src_type_of(mode_byte);
 
-      if (dst_type != OT_REG || src_type != OT_IMM) {
-        registers_[RF] |= F_BAD_INSTR;
-        is_running_ = false;
-        break;
-      }
+      if (dst_type == OT_REG) {
+        std::uint8_t dst_reg = fetch8();
+        if (dst_reg >= REG_COUNT) {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
+        std::uint32_t value = 0;
+        if (src_type == OT_REG) {
+          std::uint8_t src_reg = fetch8();
+          if (src_reg >= REG_COUNT) {
+            registers_[RF] |= F_BAD_INSTR;
+            is_running_ = false;
+            break;
+          }
+          value = registers_[src_reg];
+        } else if (src_type == OT_IMM) {
+          value = fetch32();
+        } else if (src_type == OT_MEM) {
+          std::uint32_t addr = fetch32();
+          value = load32(addr);
+          if (!is_running_) {
+            break;
+          }
+        } else {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
 
-      std::uint8_t dst_register = fetch8();
-      if (dst_register >= REG_COUNT) {
-        registers_[RF] |= F_BAD_INSTR;
-        is_running_ = false;
-        break;
-      }
-
-      std::uint32_t immediate_value = fetch32();
-
-      if (dst_register == RS) {
-        registers_[RS] = (immediate_value & 1u);
+        if (dst_reg == RS) {
+          registers_[RS] = (value & 1u);
+        } else {
+          registers_[dst_reg] = value;
+        }
+      } else if (dst_type == OT_MEM) {
+        std::uint32_t addr = fetch32();
+        std::uint32_t value = 0;
+        if (src_type == OT_REG) {
+          std::uint8_t src_reg = fetch8();
+          if (src_reg >= REG_COUNT) {
+            registers_[RF] |= F_BAD_INSTR;
+            is_running_ = false;
+            break;
+          }
+          value = registers_[src_reg];
+        } else if (src_type == OT_IMM) {
+          value = fetch32();
+        } else {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
+        store32(addr, value);
       } else {
-        registers_[dst_register] = immediate_value;
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
       }
       break;
     }
+
+    case OP_ADD:
+    case OP_SUB:
+    case OP_XOR: {
+      std::uint8_t mode_byte = read_mode();
+      std::uint8_t dst_type = dst_type_of(mode_byte);
+      std::uint8_t src_type = src_type_of(mode_byte);
+
+      if (dst_type != OT_REG) {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      std::uint8_t dst_reg = fetch8();
+      if (dst_reg >= REG_COUNT) {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      std::uint32_t rhs = 0;
+      if (src_type == OT_REG) {
+        std::uint8_t src_reg = fetch8();
+        if (src_reg >= REG_COUNT) {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
+        rhs = registers_[src_reg];
+      } else if (src_type == OT_IMM) {
+        rhs = fetch32();
+      } else if (src_type == OT_MEM) {
+        std::uint32_t addr = fetch32();
+        rhs = load32(addr);
+        if (!is_running_) {
+          break;
+        }
+      } else {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      if (opcode == OP_ADD) {
+        registers_[dst_reg] = registers_[dst_reg] + rhs;
+      } else if (opcode == OP_SUB) {
+        registers_[dst_reg] = registers_[dst_reg] - rhs;
+      } else {
+        registers_[dst_reg] = registers_[dst_reg] ^ rhs;
+      }
+      break;
+    }
+
+    case OP_CMP: {
+      std::uint8_t mode_byte = read_mode();
+      std::uint8_t dst_type = dst_type_of(mode_byte);
+      std::uint8_t src_type = src_type_of(mode_byte);
+
+      if (dst_type != OT_REG) {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      std::uint8_t lhs_reg = fetch8();
+      if (lhs_reg >= REG_COUNT) {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      std::uint32_t lhs = registers_[lhs_reg];
+      std::uint32_t rhs = 0;
+
+      if (src_type == OT_REG) {
+        std::uint8_t src_reg = fetch8();
+        if (src_reg >= REG_COUNT) {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
+        rhs = registers_[src_reg];
+      } else if (src_type == OT_IMM) {
+        rhs = fetch32();
+      } else if (src_type == OT_MEM) {
+        std::uint32_t addr = fetch32();
+        rhs = load32(addr);
+        if (!is_running_) {
+          break;
+        }
+      } else {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      set_compare_flags(lhs, rhs);
+      break;
+    }
+
+    case OP_JMP:
+    case OP_JEQ:
+    case OP_JNEQ:
+    case OP_JLA:
+    case OP_JLE: {
+      std::uint8_t mode_byte = read_mode();
+      std::uint8_t src_type = src_type_of(mode_byte);
+
+      std::uint32_t target = 0;
+      if (src_type == OT_IMM) {
+        target = fetch32();
+      } else if (src_type == OT_REG) {
+        std::uint8_t r = fetch8();
+        if (r >= REG_COUNT) {
+          registers_[RF] |= F_BAD_INSTR;
+          is_running_ = false;
+          break;
+        }
+        target = registers_[r];
+      } else {
+        registers_[RF] |= F_BAD_INSTR;
+        is_running_ = false;
+        break;
+      }
+
+      bool take = false;
+      if (opcode == OP_JMP) {
+        take = true;
+      } else if (opcode == OP_JEQ) {
+        take = (registers_[RF] & F_EQ) != 0u;
+      } else if (opcode == OP_JNEQ) {
+        take = (registers_[RF] & F_EQ) == 0u;
+      } else if (opcode == OP_JLA) {
+        take = (registers_[RF] & F_GT) != 0u;
+      } else if (opcode == OP_JLE) {
+        take = (registers_[RF] & (F_LT | F_EQ)) != 0u;
+      }
+
+      if (take) {
+        registers_[RF] |= F_TEST_TRUE;
+        registers_[IP] = target;
+      } else {
+        registers_[RF] &= ~static_cast<std::uint32_t>(F_TEST_TRUE);
+      }
+      break;
+    }
+
     case OP_SYSCALL: {
       handle_syscall();
       break;
     }
+
     default: {
       registers_[RF] |= F_BAD_INSTR;
       is_running_ = false;
       break;
     }
-  } 
+  }
 
   dump_registers(ip_before, opcode);
 }

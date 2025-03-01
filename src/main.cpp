@@ -38,6 +38,7 @@
 //
 // NOTE: This is a compact implementation meant to be extended.
 
+#include "bytecraft/asm.hpp"
 #include "bytecraft/bytecode.hpp"
 #include "bytecraft/vm.hpp"
 
@@ -49,25 +50,57 @@
 
 using namespace bc;
 
-static std::string read_all_text(const std::string& path) {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    return {};
-  }
-  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-}
-
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage:\n"
-              << "  " << argv[0] << " run <program.bvm>\n"
-              << "  " << argv[0] << " asm <input.asm> -o <output.bvm>\n";
+              << "  " << argv[0] << " asm <input.asm> -o <output.bvm>\n"
+              << "  " << argv[0] << " run <program.bvm>\n";
     return 1;
   }
 
   std::string command = argv[1];
 
-  if (command == "run") {
+  if (command == "asm") {
+    if (argc < 5) {
+      std::cerr << "Missing arguments. Example: " << argv[0] << " asm prog.asm -o prog.bvm\n";
+      return 1;
+    }
+
+    std::string input_path = argv[2];
+    std::string output_path;
+
+    for (int i = 3; i < argc; i += 1) {
+      std::string arg = argv[i];
+      if (arg == "-o" && (i + 1) < argc) {
+        output_path = argv[i + 1];
+        i += 1;
+      }
+    }
+
+    if (output_path.empty()) {
+      std::cerr << "Output file not specified (-o)\n";
+      return 1;
+    }
+
+    Assembler assembler;
+    Module module;
+    std::string error_message;
+
+    if (!assembler.assemble_file(input_path, module, error_message)) {
+      std::cerr << "Assembly failed: " << error_message << "\n";
+      return 1;
+    }
+
+    if (!save_bvm(output_path, module, error_message)) {
+      std::cerr << "Save failed: " << error_message << "\n";
+      return 1;
+    }
+
+    std::cout << "Assembled OK: entry=" << module.entry_point
+              << " code=" << module.code_section.size() << "B"
+              << " data=" << module.data_section.size() << "B\n";
+    return 0;
+  } else if (command == "run") {
     if (argc < 3) {
       std::cerr << "Missing program file\n";
       return 1;
@@ -91,13 +124,10 @@ int main(int argc, char** argv) {
           static_cast<std::uint32_t>(module.code_section.size()),
           static_cast<std::uint32_t>(module.data_section.size()));
     vm.run();
-  } else if (command == "asm") {
 
-
+    return 0;
   } else {
     std::cerr << "Unknown command: " << command << "\n";
     return 1;
   }
-
-  return 0;
 }
