@@ -3,6 +3,7 @@
 //
 
 #pragma once
+
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -20,6 +21,25 @@ class VM {
      std::uint32_t data_size);
 
   void run();
+
+  /**
+   * @brief Read the value of a CPU register.
+   *
+   * @param reg  Register enum to read.
+   * @return 32-bit value of the requested register.
+   */
+  std::uint32_t get_register(Register reg) const;
+
+  /**
+   * @brief Write the value of a CPU register.
+   *
+   * Safe for tests; production code usually manipulates registers via instructions.
+   *
+   * @param reg    Register enum to write.
+   * @param value  32-bit value to store into the register.
+   * @return void
+   */
+  void set_register(Register reg, std::uint32_t value);
 
  private:
   std::vector<std::uint8_t> memory_image_;

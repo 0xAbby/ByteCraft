@@ -556,4 +556,28 @@ void VM::run() {
   }
 }
 
+/**
+ * @brief Read the value of a CPU register.
+ *
+ * @param reg  Register enum to read.
+ * @return 32-bit value of the requested register.
+ */
+std::uint32_t VM::get_register(Register reg) const {
+  return registers_[static_cast<std::uint8_t>(reg)];
+}
+
+/**
+ * @brief Write the value of a CPU register.
+ *
+ * Safe for tests; production code usually manipulates registers via instructions.
+ *
+ * @param reg    Register enum to write.
+ * @param value  32-bit value to store into the register.
+ * @return void
+ */
+void VM::set_register(Register reg, std::uint32_t value) {
+  registers_[static_cast<std::uint8_t>(reg)] = value;
+}
+
 }  // namespace bc
+
