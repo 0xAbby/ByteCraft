@@ -540,7 +540,9 @@ void VM::step() {
     }
   }
 
-  dump_registers(ip_before, opcode);
+  if (tracing_enabled_) {
+    dump_registers(ip_before, opcode);
+  }
 }
 
 /**
@@ -577,6 +579,16 @@ std::uint32_t VM::get_register(Register reg) const {
  */
 void VM::set_register(Register reg, std::uint32_t value) {
   registers_[static_cast<std::uint8_t>(reg)] = value;
+}
+
+/**
+ * @brief Enable or disable per-instruction tracing to stdout.
+ *
+ * @param enabled  true to print trace, false to suppress.
+ * @return void
+ */
+void VM::set_tracing(bool enabled) {
+  tracing_enabled_ = enabled;
 }
 
 }  // namespace bc

@@ -22,6 +22,14 @@ class VM {
 
   void run();
 
+    /**
+   * @brief Enable or disable per-instruction tracing to stdout.
+   *
+   * @param enabled  true to print trace, false to suppress.
+   * @return void
+   */
+  void set_tracing(bool enabled);
+
   /**
    * @brief Read the value of a CPU register.
    *
@@ -47,6 +55,7 @@ class VM {
   std::uint32_t code_size_bytes_ = 0;
   std::uint32_t data_size_bytes_ = 0;
   bool is_running_ = false;
+  bool tracing_enabled_ = true;
 
   std::uint8_t fetch8();
   std::uint32_t fetch32();

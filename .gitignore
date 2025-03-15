@@ -4,4 +4,4 @@ build/CMake*
 buid/Makefile
 build/cmake*
 build/*.a
-build/*.bvm
+build/

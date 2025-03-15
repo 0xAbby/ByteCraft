@@ -6,14 +6,14 @@
 #include "bytecraft/util.hpp"
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <vector>
 
 
 namespace bc {
-
-namespace {
 
 /**
  * @brief Logical section kinds used during assembly.
@@ -25,7 +25,7 @@ enum class Section {
 };
 
 /**
- * @brief A preprocessed source line with line number.
+ * @brief A preprocessed source line with its original line number.
  */
 struct SourceLine {
   std::size_t line_number = 0;
@@ -33,7 +33,7 @@ struct SourceLine {
 };
 
 /**
- * @brief Check if a string is empty or whitespace only.
+ * @brief Check if a string is empty or contains only whitespace.
  *
  * @param s  Input string to test.
  * @return true if @p s has no non-space characters, false otherwise.
@@ -48,7 +48,7 @@ static bool is_blank(const std::string& s) {
 }
 
 /**
- * @brief Convert a string to lowercase in a copy.
+ * @brief Convert a string to lowercase (returns a copy).
  *
  * @param s  Input string to convert.
  * @return Lowercased copy of @p s.
@@ -63,7 +63,7 @@ static std::string to_lower(std::string s) {
 /**
  * @brief Split a comma-separated list into trimmed tokens.
  *
- * Note: does not support quotes or escapes (simple CSV).
+ * Simple CSV (no quotes or escapes).
  *
  * @param s  Input string with comma-separated tokens.
  * @return Vector of trimmed tokens.
@@ -86,10 +86,10 @@ static std::vector<std::string> split_csv(const std::string& s) {
 }
 
 /**
- * @brief Parse decimal or hex (0x...) string to 32-bit unsigned integer.
+ * @brief Parse a decimal or hex (0x...) number into a 32-bit unsigned value.
  *
- * @param token       Input numeric token.
- * @param out_value   Output parsed value if successful.
+ * @param token       Text to parse.
+ * @param out_value   Output parsed value on success.
  * @return true on success, false on parse error.
  */
 static bool parse_number(const std::string& token, std::uint32_t& out_value) {
@@ -113,7 +113,7 @@ static bool parse_number(const std::string& token, std::uint32_t& out_value) {
 }
 
 /**
- * @brief Determine if token denotes a register and return its enum index.
+ * @brief Determine if a token denotes a register and return its enum index.
  *
  * Accepts r1..r8, ip, rf, rs (case-insensitive).
  *
@@ -146,11 +146,13 @@ static bool is_register_token(const std::string& token, std::uint8_t& out_reg) {
 }
 
 /**
- * @brief Check for [ ... ] memory operand and extract inner token.
+ * @brief Check if a token is a bracketed memory operand and extract inner token.
+ *
+ * Example: "[symbol]" -> "symbol".
  *
  * @param token   Candidate token.
  * @param inner   Output inner text without brackets if recognized.
- * @return true if token is a bracketed memory operand, false otherwise.
+ * @return true if token is [ ... ], false otherwise.
  */
 static bool is_mem_bracket(const std::string& token, std::string& inner) {
   std::string s = trim(token);
@@ -165,7 +167,7 @@ static bool is_mem_bracket(const std::string& token, std::string& inner) {
  * @brief Parse an opcode mnemonic into an Op enum value.
  *
  * @param token  Mnemonic token (case-insensitive).
- * @return Parsed Op, or 255 cast if unknown.
+ * @return Parsed Op value, or 255 cast if unknown.
  */
 static Op parse_op(const std::string& token) {
   std::string s = to_lower(trim(token));
@@ -209,7 +211,7 @@ static Op parse_op(const std::string& token) {
 }
 
 /**
- * @brief Return encoded byte size of a single operand by type.
+ * @brief Return the encoded byte size of a single operand kind.
  *
  * @param operand_type  One of OT_REG, OT_IMM, OT_MEM.
  * @return Size in bytes of the encoded operand.
@@ -258,7 +260,118 @@ static std::size_t encoded_size(Op op, std::uint8_t dst_type, std::uint8_t src_t
   }
 }
 
-}  // namespace
+/**
+ * @brief Parse a C-like string literal with basic escapes into bytes.
+ *
+ * Supports: \n \r \t \\ \" and \xHH (two hex digits).
+ *
+ * @param literal     Input literal including the surrounding quotes.
+ * @param out_bytes   Output vector of parsed bytes.
+ * @return true on success, false on malformed input.
+ */
+static bool parse_c_string_literal(const std::string& literal,
+                                   std::vector<std::uint8_t>& out_bytes) {
+  out_bytes.clear();
+  if (literal.size() < 2) {
+    return false;
+  }
+  if (literal.front() != '"' || literal.back() != '"') {
+    return false;
+  }
+
+  for (std::size_t i = 1; i + 1 < literal.size(); ) {
+    char ch = literal[i];
+    if (ch != '\\') {
+      out_bytes.push_back(static_cast<std::uint8_t>(static_cast<unsigned char>(ch)));
+      i += 1;
+      continue;
+    }
+
+    if (i + 1 >= literal.size() - 1) {
+      return false;
+    }
+
+    char esc = literal[i + 1];
+    switch (esc) {
+      case 'n': out_bytes.push_back('\n'); i += 2; break;
+      case 'r': out_bytes.push_back('\r'); i += 2; break;
+      case 't': out_bytes.push_back('\t'); i += 2; break;
+      case '\\': out_bytes.push_back('\\'); i += 2; break;
+      case '"': out_bytes.push_back('"'); i += 2; break;
+      case 'x': {
+        if (i + 3 >= literal.size() - 1) {
+          return false;
+        }
+        auto hex_val = [](char c) -> int {
+          if (c >= '0' && c <= '9') {
+            return c - '0';
+          }
+          if (c >= 'a' && c <= 'f') {
+            return 10 + (c - 'a');
+          }
+          if (c >= 'A' && c <= 'F') {
+            return 10 + (c - 'A');
+          }
+          return -1;
+        };
+        int h1 = hex_val(literal[i + 2]);
+        int h2 = hex_val(literal[i + 3]);
+        if (h1 < 0 || h2 < 0) {
+          return false;
+        }
+        std::uint8_t byte = static_cast<std::uint8_t>((h1 << 4) | h2);
+        out_bytes.push_back(byte);
+        i += 4;
+        break;
+      }
+      default:
+        return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * @brief Parse a brace-enclosed byte list into bytes.
+ *
+ * Example: { 1, 2, 0xFF }
+ *
+ * @param list_text   Input including braces.
+ * @param out_bytes   Output vector of parsed bytes.
+ * @return true on success, false on malformed input.
+ */
+static bool parse_byte_list(const std::string& list_text,
+                            std::vector<std::uint8_t>& out_bytes) {
+  out_bytes.clear();
+
+  std::string s = trim(list_text);
+  if (s.size() < 2) {
+    return false;
+  }
+  if (s.front() != '{' || s.back() != '}') {
+    return false;
+  }
+
+  s = trim(s.substr(1, s.size() - 2));
+  if (s.empty()) {
+    return true;
+  }
+
+  std::vector<std::string> tokens = split_csv(s);
+  for (const std::string& t : tokens) {
+    std::uint32_t val = 0;
+    if (!parse_number(t, val)) {
+      return false;
+    }
+    if (val > 0xFFu) {
+      return false;
+    }
+    out_bytes.push_back(static_cast<std::uint8_t>(val & 0xFFu));
+  }
+
+  return true;
+}
 
 /**
  * @brief Assemble from a source string into a Module.
@@ -267,7 +380,10 @@ static std::size_t encoded_size(Op op, std::uint8_t dst_type, std::uint8_t src_t
  *   1) Parse and size to build symbol tables and compute layout.
  *   2) Encode instructions and resolve symbols.
  *
- * Supports sections _main and _data, labels, and DB name[size] in _data.
+ * Supports sections _main and _data, labels, and:
+ *   DB name[size]
+ *   DB name[size] = "text"
+ *   DB name[size] = { 1, 2, 0xFF }
  *
  * @param source_text    Input assembly text.
  * @param out_module     Output module (entry_point, code_section, data_section).
@@ -300,6 +416,7 @@ bool Assembler::assemble_string(const std::string& source_text,
   std::unordered_map<std::string, std::uint32_t> code_symbols;
   std::unordered_map<std::string, std::uint32_t> data_symbols;
   std::unordered_map<std::string, std::uint32_t> data_sizes;
+  std::unordered_map<std::string, std::vector<std::uint8_t>> data_initializers;
 
   std::vector<std::uint8_t> code_buffer;
   std::vector<std::uint8_t> data_buffer;
@@ -423,6 +540,7 @@ bool Assembler::assemble_string(const std::string& source_text,
         error_message = "only DB declarations allowed in _data (line " + std::to_string(line.line_number) + ")";
         return false;
       }
+
       std::string rest = trim(s.substr(3));
       std::size_t lb = rest.find('[');
       std::size_t rb = rest.find(']');
@@ -430,8 +548,11 @@ bool Assembler::assemble_string(const std::string& source_text,
         error_message = "malformed DB at line " + std::to_string(line.line_number);
         return false;
       }
+
       std::string name = trim(rest.substr(0, lb));
-      std::string size_str = trim(rest.substr(lb + 1, rb - lb - 1));
+      std::string size_and_after = rest.substr(lb + 1);
+      std::size_t close_and_after = size_and_after.find(']');
+      std::string size_str = trim(size_and_after.substr(0, close_and_after));
 
       if (name.empty()) {
         error_message = "DB missing name at line " + std::to_string(line.line_number);
@@ -443,13 +564,44 @@ bool Assembler::assemble_string(const std::string& source_text,
         error_message = "DB size must be a number at line " + std::to_string(line.line_number);
         return false;
       }
+
       if (data_symbols.count(name) != 0u || data_sizes.count(name) != 0u) {
         error_message = "duplicate DB name '" + name + "'";
         return false;
       }
 
       data_sizes[name] = size_value;
+
+      std::vector<std::uint8_t> init_bytes;
+      std::string after_bracket = trim(size_and_after.substr(close_and_after + 1));
+
+      if (!after_bracket.empty()) {
+        if (after_bracket[0] != '=') {
+          error_message = "unexpected tokens after DB size (line " + std::to_string(line.line_number) + ")";
+          return false;
+        }
+        std::string init = trim(after_bracket.substr(1));
+
+        if (!init.empty() && init.front() == '"' && init.back() == '"') {
+          if (!parse_c_string_literal(init, init_bytes)) {
+            error_message = "invalid string literal in DB initializer (line " + std::to_string(line.line_number) + ")";
+            return false;
+          }
+        } else if (!init.empty() && init.front() == '{' && init.back() == '}') {
+          if (!parse_byte_list(init, init_bytes)) {
+            error_message = "invalid byte list in DB initializer (line " + std::to_string(line.line_number) + ")";
+            return false;
+          }
+        } else {
+          error_message = "unsupported DB initializer syntax (line " + std::to_string(line.line_number) + ")";
+          return false;
+        }
+      }
+
       data_decls.push_back({name, size_value});
+      if (!init_bytes.empty()) {
+        data_initializers[name] = std::move(init_bytes);
+      }
     } else {
       error_message = "content outside of any section at line " + std::to_string(line.line_number);
       return false;
@@ -468,7 +620,41 @@ bool Assembler::assemble_string(const std::string& source_text,
     running_data_offset += size_value;
     total_data_size += size_value;
   }
+
+  std::vector<std::uint8_t> empty_data;
   data_buffer.resize(total_data_size, 0);
+
+  std::unordered_map<std::string, std::uint32_t> data_offsets;
+  running_data_offset = 0;
+  for (const auto& decl : data_decls) {
+    const std::string& name = decl.first;
+    std::uint32_t size_value = decl.second;
+    data_offsets[name] = running_data_offset;
+    running_data_offset += size_value;
+  }
+
+  for (const auto& kv : data_initializers) {
+    const std::string& name = kv.first;
+    const std::vector<std::uint8_t>& bytes = kv.second;
+
+    auto it_off = data_offsets.find(name);
+    auto it_size = data_sizes.find(name);
+    if (it_off == data_offsets.end() || it_size == data_sizes.end()) {
+      continue;
+    }
+
+    std::uint32_t off = it_off->second;
+    std::uint32_t cap = it_size->second;
+
+    std::uint32_t n = static_cast<std::uint32_t>(bytes.size());
+    if (n > cap) {
+      n = cap;
+    }
+
+    if (n > 0) {
+      std::memcpy(&data_buffer[off], bytes.data(), n);
+    }
+  }
 
   code_buffer.clear();
   code_buffer.reserve(code_size_final);
@@ -685,7 +871,7 @@ bool Assembler::assemble_string(const std::string& source_text,
   out_module.data_section = std::move(data_buffer);
 
   return true;
-} 
+}
 
 /**
  * @brief Assemble a file on disk into a Module.
