@@ -37,7 +37,7 @@ cmake .. && cmake --build . -j
 
 ```bash
 ./bytecraft asm ../test.asm -o bin.bvm
-./bytecraft run program.bvm
+./bytecraft run bin.bvm
 ```
 
 # ByteCraft Architecture
